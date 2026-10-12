@@ -2,7 +2,7 @@
 
 A zero-install, browser-only tool for developers to read messy JSON.
 
-**Live:** https://sushantdhumal.github.io/json-peeler/
+**Live:** https://the-code-runner1994.github.io/json-peeler/
 
 ## Features
 - **Peel** – unwraps stringified (and multiply-stringified) JSON, including nested stringified values, and pretty-prints it with folding and search (⌘F).
