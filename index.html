@@ -1,0 +1,920 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>JSON Peeler</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧅</text></svg>"/>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Syne:wght@400;700;800&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css"/>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/fold/foldgutter.min.css"/>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/dialog/dialog.min.css"/>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/search/matchesonscrollbar.min.css"/>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+:root{
+  --bg:#f5f6fa;--surface:#fff;--surface2:#eef0f6;--border:#dde1ec;
+  --accent:#3b6ef5;--accent2:#0fa873;--danger:#e03e3e;--warn:#e8a000;--violet:#7b4fe0;
+  --text:#1a1d2e;--muted:#7a80a0;
+  --mono:'JetBrains Mono',monospace;--sans:'Syne',sans-serif;
+}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);height:100vh;display:flex;flex-direction:column;overflow:hidden;}
+header{padding:8px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;background:var(--surface);flex-shrink:0;}
+h1{font-size:16px;font-weight:800;letter-spacing:-0.02em;}
+.badge{font-family:var(--mono);font-size:10px;background:var(--surface2);border:1px solid var(--border);color:var(--muted);padding:2px 8px;border-radius:4px;}
+.main{flex:1;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:auto 1fr auto auto;min-height:0;}
+.toolbar{grid-column:1/-1;padding:9px 18px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex-shrink:0;}
+.btn{font-family:var(--mono);font-size:11px;font-weight:600;padding:5px 13px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);cursor:pointer;transition:all .15s;display:flex;align-items:center;gap:5px;white-space:nowrap;}
+.btn:hover{background:var(--border);}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;}
+.btn.primary:hover{background:#5a86f7;}
+.btn.success{background:transparent;border-color:var(--accent2);color:var(--accent2);}
+.btn.danger{background:transparent;border-color:var(--danger);color:var(--danger);}
+.btn.compare{background:transparent;border-color:var(--violet);color:var(--violet);}
+.btn.compare:hover{background:rgba(123,79,224,.08);}
+.btn.compare.active{background:var(--violet);color:#fff;}
+.sep{flex:1;}
+.depth-badge{font-family:var(--mono);font-size:11px;color:var(--muted);padding:5px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;}
+.depth-badge span{color:var(--accent2);font-weight:600;}
+.opt{font-family:var(--mono);font-size:11px;color:var(--muted);align-items:center;gap:5px;cursor:pointer;user-select:none;}
+.opt input{accent-color:var(--violet);cursor:pointer;}
+.opt.always{display:flex;}
+
+/* mode visibility */
+.compare-only{display:none!important;}
+.main.compare .compare-only{display:flex!important;}
+.main.compare .normal-only{display:none!important;}
+
+.pane{display:flex;flex-direction:column;border-right:1px solid var(--border);min-height:0;overflow:hidden;}
+.pane:nth-child(3){border-right:none;}
+.pane-header{padding:8px 16px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-shrink:0;}
+.pane-title{font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.08em;color:var(--muted);text-transform:uppercase;}
+.pane-indicator{width:6px;height:6px;border-radius:50%;background:var(--border);margin-left:auto;transition:background .3s;}
+.pane-indicator.active{background:var(--accent2);box-shadow:0 0 6px var(--accent2);}
+
+/* Both panes use CodeMirror — shared wrapper style */
+.cm-wrap{flex:1;display:flex;overflow:hidden;min-height:0;}
+.CodeMirror{flex:1;height:100%;font-family:var(--mono);font-size:12px;line-height:1.7;background:var(--bg);color:var(--text);border:none;}
+.CodeMirror-scroll{padding:4px 0;}
+.CodeMirror-gutters{background:var(--surface2);border-right:1px solid var(--border);}
+.CodeMirror-linenumber{color:var(--muted);font-family:var(--mono);font-size:11px;padding:0 8px 0 4px;}
+.CodeMirror-foldgutter{width:14px;}
+.CodeMirror-foldgutter-open,.CodeMirror-foldgutter-folded{cursor:pointer;color:var(--muted);font-size:10px;padding-top:1px;}
+.CodeMirror-foldgutter-open:after{content:"▼";}
+.CodeMirror-foldgutter-folded:after{content:"▶";}
+.CodeMirror-foldmarker{color:var(--muted);background:var(--surface2);border:1px solid var(--border);border-radius:3px;font-family:var(--mono);font-size:10px;padding:0 5px;cursor:pointer;}
+.cm-s-default .cm-string{color:#1a7a3f;}
+.cm-s-default .cm-string-2{color:#1a7a3f;}
+.cm-s-default .cm-number{color:#b06000;}
+.cm-s-default .cm-atom{color:#c44a00;}
+.cm-s-default .cm-property{color:#5c35cc;}
+.cm-s-default .cm-punctuation{color:var(--muted);}
+.CodeMirror-selected{background:rgba(59,110,245,0.15);}
+.CodeMirror-focused .CodeMirror-selected{background:rgba(59,110,245,0.2);}
+.CodeMirror-placeholder{color:#b3b9cc!important;}
+
+/* Diff line highlights */
+.CodeMirror .diff-removed{background:rgba(123,79,224,.12);}
+.CodeMirror .diff-added{background:rgba(15,168,115,.14);}
+.CodeMirror .diff-changed{background:rgba(232,160,0,.17);}
+.CodeMirror .diff-active{background:rgba(59,110,245,.24)!important;}
+.diff-g-removed{box-shadow:inset 3px 0 0 var(--violet);}
+.diff-g-added{box-shadow:inset 3px 0 0 var(--accent2);}
+.diff-g-changed{box-shadow:inset 3px 0 0 var(--warn);}
+.diff-g-active{box-shadow:inset 3px 0 0 var(--accent)!important;}
+
+/* placeholder shown before first peel */
+.placeholder-wrap{display:flex;align-items:center;justify-content:center;flex:1;color:#c2c8db;}
+.placeholder-wrap p{font-size:12px;text-align:center;line-height:1.6;}
+
+/* Diff panel (compare mode only) */
+.diff-panel{grid-column:1/-1;display:none;flex-direction:column;height:min(240px,32vh);border-top:1px solid var(--border);background:var(--surface);min-height:0;}
+.main.compare .diff-panel{display:flex;}
+.diff-head{display:flex;align-items:center;gap:8px;padding:7px 16px;border-bottom:1px solid var(--border);flex-shrink:0;flex-wrap:wrap;}
+.chip{font-family:var(--mono);font-size:10px;font-weight:600;padding:3px 10px;border-radius:999px;border:1px solid var(--border);background:var(--surface2);color:var(--muted);cursor:pointer;}
+.chip b{color:var(--text);margin-left:4px;}
+.chip.on{border-color:var(--accent);color:var(--accent);background:rgba(59,110,245,.06);}
+.chip .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px;vertical-align:0;}
+.diff-list{flex:1;overflow:auto;min-height:0;}
+.diff-row{display:flex;align-items:baseline;gap:10px;padding:4px 16px;font-family:var(--mono);font-size:11.5px;cursor:pointer;border-bottom:1px solid var(--surface2);}
+.diff-row:hover{background:var(--surface2);}
+.diff-row.active{background:rgba(59,110,245,.10);box-shadow:inset 3px 0 0 var(--accent);}
+.tag{font-size:9px;font-weight:700;padding:1px 0;border-radius:3px;letter-spacing:.05em;flex-shrink:0;width:78px;text-align:center;}
+.tag.changed{background:rgba(232,160,0,.18);color:#9a6a00;}
+.tag.added{background:rgba(15,168,115,.16);color:#0b7a54;}
+.tag.removed{background:rgba(123,79,224,.14);color:#5c35cc;}
+.dpath{color:#5c35cc;font-weight:600;flex-shrink:0;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.dval{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
+.dval .old{color:#5c35cc;}
+.dval .sepv{color:var(--muted);margin:0 6px;}
+.dval .new{color:#0b7a54;}
+.diff-empty{padding:18px 16px;font-family:var(--mono);font-size:11.5px;color:var(--muted);}
+.diff-empty.ok{color:var(--accent2);font-weight:600;}
+.diff-empty.stale{color:#9a6a00;}
+
+.status-bar{grid-column:1/-1;padding:5px 18px;background:var(--surface);border-top:1px solid var(--border);display:flex;align-items:center;gap:18px;font-family:var(--mono);font-size:10px;color:var(--muted);flex-shrink:0;}
+.status-bar .ok{color:var(--accent2);}.status-bar .err{color:var(--danger);}
+.toast{position:fixed;bottom:28px;right:24px;background:var(--accent);color:#fff;font-family:var(--mono);font-size:11px;font-weight:600;padding:8px 16px;border-radius:8px;opacity:0;transform:translateY(8px);transition:all .2s;pointer-events:none;z-index:100;}
+.toast.show{opacity:1;transform:translateY(0);}
+
+/* Search dialog styling */
+.CodeMirror-dialog{background:var(--surface);border-bottom:1px solid var(--border);padding:6px 12px;font-family:var(--mono);font-size:12px;color:var(--text);}
+.CodeMirror-dialog input{font-family:var(--mono);font-size:12px;color:var(--text);background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:3px 8px;outline:none;width:220px;}
+.CodeMirror-dialog input:focus{border-color:var(--accent);}
+.CodeMirror-search-match{background:#ff0;color:#000;border-radius:2px;}
+.cm-matchhighlight{background:#ffe066;color:#000;border-radius:2px;}
+/* custom search bar */
+.jp-search-bar{position:absolute;top:0;left:0;right:0;z-index:20;background:var(--surface);border-bottom:1px solid var(--border);padding:6px 10px;display:none;align-items:center;gap:6px;font-family:var(--mono);font-size:12px;box-shadow:0 2px 8px rgba(0,0,0,0.08);}
+.jp-search-bar.active{display:flex;}
+.jp-search-input{font-family:var(--mono);font-size:12px;color:var(--text);background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:4px 10px;outline:none;width:200px;flex-shrink:0;}
+.jp-search-input:focus{border-color:var(--accent);}
+.jp-search-count{font-size:11px;color:var(--muted);min-width:60px;}
+.jp-search-btn{font-family:var(--mono);font-size:13px;width:26px;height:26px;display:flex;align-items:center;justify-content:center;border:1px solid var(--border);border-radius:4px;background:var(--surface2);color:var(--text);cursor:pointer;flex-shrink:0;}
+.jp-search-btn:hover{background:var(--border);}
+.jp-search-close{margin-left:auto;font-size:14px;width:26px;height:26px;display:flex;align-items:center;justify-content:center;border:none;background:transparent;color:var(--muted);cursor:pointer;border-radius:4px;flex-shrink:0;}
+.jp-search-close:hover{background:var(--surface2);color:var(--danger);}
+</style>
+</head>
+<body>
+<header>
+  <span style="font-size:18px">🧅</span>
+  <h1>JSON Peeler</h1>
+  <div class="sep"></div>
+  <span style="font-family:var(--mono);font-size:13px;color:var(--muted)">Developed by <strong style="color:var(--text)">Sushant Dhumal</strong> &nbsp;·&nbsp; Found a bug or have a suggestion? Your feedback is always welcome 🙌</span>
+</header>
+<div class="main" id="main">
+  <div class="toolbar">
+    <button class="btn primary" id="peelBtn" onclick="runPrimary()">🧅 Peel</button>
+    <button class="btn" onclick="pasteClipboard()">⎘ Paste</button>
+    <button class="btn compare" id="compareBtn" onclick="toggleCompare()" title="Compare two JSONs side by side">⇄ Compare</button>
+    <button class="btn danger" onclick="clearAll()">✕ Clear</button>
+    <button class="btn" onclick="foldAll()">⊟ Collapse All</button>
+    <button class="btn" onclick="unfoldAll()">⊞ Expand All</button>
+    <label class="opt compare-only" title="Sort object keys alphabetically in both panes so they line up visually. Key order never counts as a difference.">
+      <input type="checkbox" id="sortKeys" checked onchange="if(diffState.ran) runCompare()"/> Sort keys
+    </label>
+    <label class="opt always" title="Wrap long values onto the next line instead of scrolling sideways">
+      <input type="checkbox" id="wrapLines" checked onchange="setWrap(this.checked)"/> Wrap lines
+    </label>
+    <div class="sep"></div>
+    <div class="depth-badge normal-only">Depth: <span id="depthVal">—</span></div>
+    <div class="depth-badge compare-only">Diffs: <span id="diffVal">—</span></div>
+    <button class="btn success" id="copyBtn" onclick="copyOutput()">⊕ Copy Output</button>
+    <button class="btn" id="dlBtn" onclick="downloadOutput()">↓ Download</button>
+  </div>
+
+  <!-- Left pane: input (normal) / JSON A (compare) -->
+  <div class="pane">
+    <div class="pane-header">
+      <span class="pane-title" id="titleA">Input — Stringified JSON</span>
+      <div class="pane-indicator" id="inIndicator"></div>
+    </div>
+    <div class="cm-wrap" id="inputWrap" style="position:relative;">
+      <div class="jp-search-bar" id="searchBarInput">
+        <input class="jp-search-input" id="searchInputInput" placeholder="Search…" oninput="onSearchInput(cmInput, 'Input')" onkeydown="onSearchKey(event, cmInput, 'Input')"/>
+        <span class="jp-search-count" id="searchCountInput">—</span>
+        <button class="jp-search-btn" onclick="searchPrev(cmInput, 'Input')" title="Previous (Shift+Cmd+G)">↑</button>
+        <button class="jp-search-btn" onclick="searchNext(cmInput, 'Input')" title="Next (Cmd+G)">↓</button>
+        <button class="jp-search-close" onclick="closeSearch(cmInput, 'Input')" title="Close (Esc)">✕</button>
+      </div>
+      <textarea id="cmInput"></textarea>
+    </div>
+  </div>
+
+  <!-- Right pane: output (normal, read-only) / JSON B (compare, editable) -->
+  <div class="pane">
+    <div class="pane-header">
+      <span class="pane-title" id="titleB">Output — Formatted JSON</span>
+      <div class="pane-indicator" id="outIndicator"></div>
+    </div>
+    <div class="cm-wrap" id="outputWrap" style="position:relative;">
+      <div class="jp-search-bar" id="searchBarOutput">
+        <input class="jp-search-input" id="searchInputOutput" placeholder="Search…" oninput="onSearchInput(cmOutput, 'Output')" onkeydown="onSearchKey(event, cmOutput, 'Output')"/>
+        <span class="jp-search-count" id="searchCountOutput">—</span>
+        <button class="jp-search-btn" onclick="searchPrev(cmOutput, 'Output')" title="Previous (Shift+Cmd+G)">↑</button>
+        <button class="jp-search-btn" onclick="searchNext(cmOutput, 'Output')" title="Next (Cmd+G)">↓</button>
+        <button class="jp-search-close" onclick="closeSearch(cmOutput, 'Output')" title="Close (Esc)">✕</button>
+      </div>
+      <div class="placeholder-wrap" id="placeholder">
+        <p>🧅 Paste stringified JSON on the left<br/>and click <strong>Peel</strong></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Differences list (compare mode only) -->
+  <div class="diff-panel" id="diffPanel">
+    <div class="diff-head">
+      <span class="pane-title">Differences</span>
+      <button class="chip on" data-f="all" onclick="setFilter('all')">All<b id="cAll">0</b></button>
+      <button class="chip" data-f="changed" onclick="setFilter('changed')"><span class="dot" style="background:var(--warn)"></span>Different<b id="cChanged">0</b></button>
+      <button class="chip" data-f="added" onclick="setFilter('added')"><span class="dot" style="background:var(--accent2)"></span>Only in B<b id="cAdded">0</b></button>
+      <button class="chip" data-f="removed" onclick="setFilter('removed')"><span class="dot" style="background:var(--violet)"></span>Only in A<b id="cRemoved">0</b></button>
+      <div class="sep"></div>
+      <button class="jp-search-btn" onclick="stepDiff(-1)" title="Previous difference (Alt+↑)">↑</button>
+      <button class="jp-search-btn" onclick="stepDiff(1)" title="Next difference (Alt+↓)">↓</button>
+      <button class="btn" onclick="swapAB()" title="Swap JSON A and JSON B">⇆ Swap A/B</button>
+    </div>
+    <div class="diff-list" id="diffList"></div>
+  </div>
+
+  <div class="status-bar">
+    <span id="statusMsg">Ready</span>
+    <span id="lineCount"></span>
+    <span id="sizeInfo"></span>
+    <span id="nodeCount"></span>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/javascript/javascript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/fold/foldcode.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/fold/foldgutter.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/fold/brace-fold.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/display/placeholder.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/dialog/dialog.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/search/searchcursor.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/search/search.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/search/jump-to-line.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/search/matchesonscrollbar.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/scroll/annotatescrollbar.min.js"></script>
+<script>
+var lastParsed = null;
+var cmInput    = null;
+var cmOutput   = null;
+var compareMode = false;
+var lastFocused = null;
+
+var INPUT_PH = 'Paste stringified JSON here...\n\ne.g.  "{\\"key\\": \\"value\\"}"\n\n🧅 Peels nested stringification.\n\n⌘ + Enter to Peel';
+var A_PH = 'Paste JSON A here (stringified or plain)…';
+var B_PH = 'Paste JSON B here (stringified or plain)…\n\n⌘ + Enter to compare';
+
+function showToast(msg){
+  var t=document.getElementById('toast');
+  t.textContent=msg;t.classList.add('show');
+  setTimeout(function(){t.classList.remove('show');},2000);
+}
+
+/* ── Line wrapping (on by default, remembered per browser) ── */
+function wrapOn(){ try { return localStorage.getItem('jp-wrap') !== '0'; } catch(e){ return true; } }
+function setWrap(on){
+  try { localStorage.setItem('jp-wrap', on ? '1' : '0'); } catch(e){}
+  [cmInput, cmOutput].forEach(function(cm){ if (cm) cm.setOption('lineWrapping', on); });
+  refreshEditors();
+}
+/* Wrapped continuation lines are indented to match the line's own indentation */
+function hangingIndent(cm, line, el){
+  var tab = cm.getOption('tabSize');
+  var off = CodeMirror.countColumn(line.text, null, tab) * cm.defaultCharWidth();
+  el.style.textIndent = '-' + (off + 2*cm.defaultCharWidth()) + 'px';
+  el.style.paddingLeft = (4 + off + 2*cm.defaultCharWidth()) + 'px';
+}
+
+/* ── Shared CodeMirror factory ── */
+function makeCM(textareaId, opts) {
+  var ta = document.getElementById(textareaId);
+  var cm = CodeMirror.fromTextArea(ta, Object.assign({
+    mode: {name:'javascript', json:true},
+    lineNumbers: true,
+    foldGutter: true,
+    gutters: ['CodeMirror-linenumbers','CodeMirror-foldgutter'],
+    lineWrapping: wrapOn(),
+    theme: 'default',
+    extraKeys: {
+      'Ctrl-Q': function(cm){ cm.foldCode(cm.getCursor()); },
+      'Cmd-Q':  function(cm){ cm.foldCode(cm.getCursor()); },
+      'Cmd-F':  function(cm){ openSearch(cm); },
+      'Ctrl-F': function(cm){ openSearch(cm); },
+      'Cmd-G':  function(cm){ searchNext(cm); },
+      'Ctrl-G': function(cm){ searchNext(cm); },
+      'Shift-Cmd-G':  function(cm){ searchPrev(cm); },
+      'Shift-Ctrl-G': function(cm){ searchPrev(cm); },
+      'Escape': function(cm){ closeSearch(cm); },
+      'Cmd-Enter':  function(){ runPrimary(); },
+      'Ctrl-Enter': function(){ runPrimary(); }
+    }
+  }, opts));
+  cm.getWrapperElement().style.flex   = '1';
+  cm.getWrapperElement().style.height = '100%';
+  cm.getWrapperElement().style.overflow = 'hidden';
+  cm.on('focus', function(c){ lastFocused = c; });
+  cm.on('renderLine', function(c, line, el){ if (c.getOption('lineWrapping')) hangingIndent(c, line, el); });
+  cm.on('change', function(c, change){ onEditorChange(c, change); });
+  return cm;
+}
+
+/* ── Init input CM once ── */
+function initInputCM() {
+  if (cmInput) return;
+  cmInput = makeCM('cmInput', { readOnly: false, placeholder: INPUT_PH });
+}
+
+/* ── Init output CM once ── */
+function initOutputCM() {
+  if (cmOutput) return;
+  var ph = document.getElementById('placeholder');
+  if (ph) ph.style.display = 'none';
+  var wrap = document.getElementById('outputWrap');
+  var ta = document.createElement('textarea');
+  ta.id = 'cmOutput';
+  wrap.appendChild(ta);
+  cmOutput = makeCM('cmOutput', { readOnly: true });
+}
+
+function onEditorChange(cm, change){
+  var hasContent = cm.getValue().trim().length > 0;
+  if (cm === cmInput) document.getElementById('inIndicator').classList.toggle('active', hasContent);
+  if (cm === cmOutput && compareMode) document.getElementById('outIndicator').classList.toggle('active', hasContent);
+  // Typing into a pane after a compare makes the highlights stale
+  if (compareMode && diffState.ran && change.origin !== 'setValue') markStale();
+}
+
+function refreshEditors(){
+  setTimeout(function(){ if(cmInput) cmInput.refresh(); if(cmOutput) cmOutput.refresh(); }, 50);
+}
+
+/* ── Fold / Unfold all (both panes) ── */
+function foldAll(){
+  [cmInput, cmOutput].forEach(function(cm){
+    if (!cm) return;
+    cm.operation(function(){
+      for (var i=0;i<cm.lineCount();i++) cm.foldCode(CodeMirror.Pos(i,0),null,'fold');
+    });
+  });
+}
+
+function unfoldAll(){
+  [cmInput, cmOutput].forEach(function(cm){
+    if (!cm) return;
+    cm.operation(function(){
+      for (var i=0;i<cm.lineCount();i++) cm.foldCode(CodeMirror.Pos(i,0),null,'unfold');
+    });
+  });
+}
+
+/* ── Compare: pure helpers (no DOM) ── */
+
+/* Deep unstringify */
+function deepUnstringify(val,depth){
+  depth=depth||0;
+  if(typeof val==='string'){
+    try{
+      var p=JSON.parse(val);
+      // Only unwrap nested strings or objects/arrays.
+      // Leave string-wrapped primitives ("20", "false") as-is.
+      if(typeof p==='string') return deepUnstringify(p,depth+1);
+      if(typeof p==='object'&&p!==null) return deepUnstringify(p,depth+1);
+      return {result:val,depth:depth};
+    }catch(e){return {result:val,depth:depth};}
+  }
+  if(Array.isArray(val)) return {result:val.map(function(x){return deepUnstringify(x,depth).result;}),depth:depth};
+  if(typeof val==='object'&&val!==null){
+    var o={};
+    Object.keys(val).forEach(function(k){o[k]=deepUnstringify(val[k],depth).result;});
+    return {result:o,depth:depth};
+  }
+  return {result:val,depth:depth};
+}
+
+function peel(raw){ return deepUnstringify(JSON.parse(raw), 1); }
+
+function typeOf(v){ return v===null ? 'null' : Array.isArray(v) ? 'array' : typeof v; }
+
+/* $.user.addresses[0]["first-name"] */
+function pathKey(segs){
+  var s='$';
+  for (var i=0;i<segs.length;i++){
+    var k=segs[i];
+    if (typeof k==='number') s+='['+k+']';
+    else if (/^[A-Za-z_$][\w$]*$/.test(k)) s+='.'+k;
+    else s+='['+JSON.stringify(k)+']';
+  }
+  return s;
+}
+
+/* Pretty-prints like JSON.stringify(v,null,2) and records which lines every path occupies */
+function formatWithMap(val, sortKeys){
+  var lines=[], map={};
+  function emit(v, ind, prefix, segs, comma){
+    var pad=new Array(ind+1).join('  '), key=pathKey(segs), start=lines.length;
+    if (v!==null && typeof v==='object'){
+      var isArr=Array.isArray(v);
+      var keys=isArr ? v.map(function(_,i){return i;}) : Object.keys(v);
+      if (!isArr && sortKeys) keys.sort();
+      var o=isArr?'[':'{', c=isArr?']':'}';
+      if (!keys.length){ lines.push(pad+prefix+o+c+comma); map[key]={s:start,e:start}; return; }
+      lines.push(pad+prefix+o);
+      keys.forEach(function(k,i){
+        emit(v[k], ind+1, isArr?'':JSON.stringify(k)+': ', segs.concat([k]), i<keys.length-1?',':'');
+      });
+      lines.push(pad+c+comma);
+      map[key]={s:start,e:lines.length-1};
+    } else {
+      lines.push(pad+prefix+JSON.stringify(v)+comma);
+      map[key]={s:start,e:start};
+    }
+  }
+  emit(val,0,'',[],'');
+  return {text:lines.join('\n'), map:map};
+}
+
+/* Structural diff. Objects compare by key (order ignored); arrays compare by index. */
+function diffValues(a, b, segs, out, sortKeys){
+  var ta=typeOf(a), tb=typeOf(b);
+  if (ta!==tb){ out.push({kind:'changed', segs:segs, a:a, b:b}); return out; }
+  if (ta==='object'){
+    var keys=Object.keys(a);
+    Object.keys(b).forEach(function(k){ if(!Object.prototype.hasOwnProperty.call(a,k)) keys.push(k); });
+    if (sortKeys) keys.sort();
+    keys.forEach(function(k){
+      var inA=Object.prototype.hasOwnProperty.call(a,k), inB=Object.prototype.hasOwnProperty.call(b,k);
+      var s=segs.concat([k]);
+      if (!inB) out.push({kind:'removed', segs:s, a:a[k]});
+      else if (!inA) out.push({kind:'added', segs:s, b:b[k]});
+      else diffValues(a[k], b[k], s, out, sortKeys);
+    });
+  } else if (ta==='array'){
+    var n=Math.max(a.length,b.length);
+    for (var i=0;i<n;i++){
+      var s2=segs.concat([i]);
+      if (i>=a.length) out.push({kind:'added', segs:s2, b:b[i]});
+      else if (i>=b.length) out.push({kind:'removed', segs:s2, a:a[i]});
+      else diffValues(a[i], b[i], s2, out, sortKeys);
+    }
+  } else if (a!==b){
+    out.push({kind:'changed', segs:segs, a:a, b:b});
+  }
+  return out;
+}
+
+function shortVal(v){ var s=JSON.stringify(v); return s.length>80 ? s.slice(0,77)+'…' : s; }
+
+function diffReportText(diffs){
+  return diffs.map(function(d){
+    var p=pathKey(d.segs);
+    if (d.kind==='changed') return '≠ '+p+'  A: '+JSON.stringify(d.a)+'  |  B: '+JSON.stringify(d.b);
+    if (d.kind==='added')   return '▶ '+p+'  only in B: '+JSON.stringify(d.b);
+    return '◀ '+p+'  only in A: '+JSON.stringify(d.a);
+  }).join('\n');
+}
+/* ── end pure helpers ── */
+
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+/* ── Primary action: Peel (normal) or Find Diff (compare) ── */
+function runPrimary(){ if (compareMode) runCompare(); else process(); }
+
+/* ── Process (Peel) ── */
+function process(){
+  initInputCM();
+  var raw = cmInput.getValue().trim();
+  if(!raw){setStatus('No input provided','err');return;}
+  var parsed,depth=0;
+  try{
+    var r=peel(raw);
+    parsed=r.result;depth=r.depth;
+  }catch(e){
+    setStatus('Parse error: '+e.message,'err');
+    return;
+  }
+  lastParsed=parsed;
+  var formatted=JSON.stringify(parsed,null,2)
+    .split('\n').filter(function(l){return l.trim()!=='';}).join('\n');
+
+  initOutputCM();
+  cmOutput.setValue(formatted);
+  setTimeout(function(){cmOutput.refresh();},50);
+
+  var lc=formatted.split('\n').length;
+  var sk=(new Blob([formatted]).size/1024).toFixed(1);
+  var kc=(formatted.match(/"[^"]+"\s*:/g)||[]).length;
+  document.getElementById('outIndicator').classList.add('active');
+  document.getElementById('depthVal').textContent=depth;
+  document.getElementById('lineCount').textContent=lc+' lines';
+  document.getElementById('sizeInfo').textContent=sk+' KB';
+  document.getElementById('nodeCount').textContent=kc+' keys';
+  setStatus('Parsed successfully','ok');
+}
+
+function setStatus(msg,type){var el=document.getElementById('statusMsg');el.textContent=msg;el.className=type||'';}
+
+/* ════════════════════ Compare mode ════════════════════ */
+/* Each mode keeps its own editor contents across switches */
+var modeStash = { peel:'', a:'', b:'', compareRan:false };
+
+var diffState = { ran:false, diffs:[], visible:[], mapA:{}, mapB:{}, lineMarks:[], activeMarks:[], idx:-1, filter:'all' };
+
+var EMPTY_MSG = 'Paste JSON A on the left and JSON B on the right, then click <strong>⇄ Find Diff</strong> (⌘ + Enter).';
+
+function toggleCompare(){
+  initInputCM(); initOutputCM();
+  compareMode = !compareMode;
+  document.getElementById('main').classList.toggle('compare', compareMode);
+  var cb = document.getElementById('compareBtn');
+  cb.classList.toggle('active', compareMode);
+  cb.innerHTML = compareMode ? '✕ Exit Compare' : '⇄ Compare';
+  document.getElementById('peelBtn').innerHTML = compareMode ? '⇄ Find Diff' : '🧅 Peel';
+  document.getElementById('titleA').textContent = compareMode ? 'JSON A' : 'Input — Stringified JSON';
+  document.getElementById('titleB').textContent = compareMode ? 'JSON B' : 'Output — Formatted JSON';
+  document.getElementById('copyBtn').innerHTML = compareMode ? '⊕ Copy Diff' : '⊕ Copy Output';
+  document.getElementById('dlBtn').innerHTML  = compareMode ? '↓ Diff Report' : '↓ Download';
+  ['lineCount','sizeInfo','nodeCount'].forEach(function(id){document.getElementById(id).textContent='';});
+
+  ['Input','Output'].forEach(function(p){ if (document.getElementById('searchBar'+p).classList.contains('active')) closeSearch(p==='Input'?cmInput:cmOutput, p); });
+  if (compareMode){
+    // Leaving Peel: remember its input, restore the Compare panels
+    modeStash.peel = cmInput.getValue();
+    var rerun = modeStash.compareRan;
+    clearDiff(); resetDiffUI();
+    cmInput.setOption('placeholder', A_PH);
+    cmOutput.setOption('readOnly', false);
+    cmOutput.setOption('placeholder', B_PH);
+    cmInput.setValue(modeStash.a);
+    cmOutput.setValue(modeStash.b);
+    document.getElementById('inIndicator').classList.toggle('active', !!modeStash.a.trim());
+    document.getElementById('outIndicator').classList.toggle('active', !!modeStash.b.trim());
+    setStatus('Compare mode — paste JSON A (left) and JSON B (right)');
+    if (rerun && modeStash.a.trim() && modeStash.b.trim()) runCompare();
+    else (modeStash.a.trim() ? cmOutput : cmInput).focus();
+  } else {
+    // Leaving Compare: remember JSON A / JSON B, restore the Peel input
+    modeStash.a = cmInput.getValue();
+    modeStash.b = cmOutput.getValue();
+    modeStash.compareRan = diffState.ran;
+    clearDiff(); resetDiffUI();
+    cmInput.setOption('placeholder', INPUT_PH);
+    cmOutput.setOption('readOnly', true);
+    cmOutput.setOption('placeholder', '');
+    cmInput.setValue(modeStash.peel);
+    cmOutput.setValue('');
+    document.getElementById('inIndicator').classList.toggle('active', !!modeStash.peel.trim());
+    document.getElementById('outIndicator').classList.remove('active');
+    if (modeStash.peel.trim()) process(); else setStatus('Ready');
+  }
+  refreshEditors();
+}
+
+function runCompare(){
+  initInputCM(); initOutputCM();
+  var rawA = cmInput.getValue().trim(), rawB = cmOutput.getValue().trim();
+  if (!rawA){ setStatus('JSON A is empty','err'); cmInput.focus(); return; }
+  if (!rawB){ setStatus('JSON B is empty','err'); cmOutput.focus(); return; }
+  var a, b;
+  try { a = peel(rawA).result; } catch(e){ setStatus('JSON A parse error: '+e.message,'err'); return; }
+  try { b = peel(rawB).result; } catch(e){ setStatus('JSON B parse error: '+e.message,'err'); return; }
+
+  var sort = document.getElementById('sortKeys').checked;
+  var fa = formatWithMap(a, sort), fb = formatWithMap(b, sort);
+
+  clearDiff();
+  cmInput.setValue(fa.text);
+  cmOutput.setValue(fb.text);
+
+  diffState.mapA = fa.map; diffState.mapB = fb.map;
+  diffState.diffs = diffValues(a, b, [], [], sort);
+  diffState.ran = true;
+
+  applyDiffHighlights();
+  updateCounts();
+  renderDiffList();
+
+  var c = countKinds(diffState.diffs);
+  if (!diffState.diffs.length) setStatus('✓ Identical — no differences','ok');
+  else setStatus(c.changed+' different · '+c.removed+' only in A · '+c.added+' only in B');
+  document.getElementById('lineCount').textContent = 'A: '+cmInput.lineCount()+' lines';
+  document.getElementById('sizeInfo').textContent  = 'B: '+cmOutput.lineCount()+' lines';
+  document.getElementById('nodeCount').textContent = 'key order ignored';
+  refreshEditors();
+  if (diffState.visible.length) setTimeout(function(){ selectDiff(0); }, 60);
+}
+
+function countKinds(diffs){
+  var c={changed:0,added:0,removed:0};
+  diffs.forEach(function(d){ c[d.kind]++; });
+  return c;
+}
+
+function updateCounts(){
+  var c = countKinds(diffState.diffs);
+  document.getElementById('cAll').textContent = diffState.diffs.length;
+  document.getElementById('cChanged').textContent = c.changed;
+  document.getElementById('cAdded').textContent = c.added;
+  document.getElementById('cRemoved').textContent = c.removed;
+  document.getElementById('diffVal').textContent = diffState.ran ? diffState.diffs.length : '—';
+}
+
+/* line highlight bookkeeping */
+function markRange(cm, r, kind, store){
+  if (!cm || !r) return;
+  for (var l=r.s; l<=r.e; l++){
+    var h1 = cm.addLineClass(l, 'background', 'diff-'+kind);
+    store.push({cm:cm, h:h1, where:'background', cls:'diff-'+kind});
+    var h2 = cm.addLineClass(l, 'gutter', 'diff-g-'+kind);
+    store.push({cm:cm, h:h2, where:'gutter', cls:'diff-g-'+kind});
+  }
+}
+function clearMarks(store){
+  store.forEach(function(m){ m.cm.removeLineClass(m.h, m.where, m.cls); });
+  store.length = 0;
+}
+function clearDiff(){ clearMarks(diffState.lineMarks); clearMarks(diffState.activeMarks); }
+
+function applyDiffHighlights(){
+  var marks = diffState.lineMarks;
+  cmInput.operation(function(){ cmOutput.operation(function(){
+    diffState.diffs.forEach(function(d){
+      var k = pathKey(d.segs);
+      if (d.kind !== 'added')   markRange(cmInput,  diffState.mapA[k], d.kind, marks);
+      if (d.kind !== 'removed') markRange(cmOutput, diffState.mapB[k], d.kind, marks);
+    });
+  }); });
+}
+
+function resetDiffUI(){
+  diffState.ran=false; diffState.diffs=[]; diffState.visible=[]; diffState.idx=-1;
+  diffState.mapA={}; diffState.mapB={};
+  setFilter('all', true);
+  updateCounts();
+  document.getElementById('diffList').innerHTML = '<div class="diff-empty">'+EMPTY_MSG+'</div>';
+}
+
+function markStale(){
+  clearDiff();
+  diffState.ran=false; diffState.diffs=[]; diffState.visible=[]; diffState.idx=-1;
+  updateCounts();
+  document.getElementById('diffList').innerHTML =
+    '<div class="diff-empty stale">✎ Inputs changed — click <strong>⇄ Find Diff</strong> (⌘ + Enter) to compare again.</div>';
+  setStatus('Inputs changed — re-run compare');
+}
+
+function setFilter(f, silent){
+  diffState.filter = f;
+  document.querySelectorAll('.diff-head .chip').forEach(function(c){ c.classList.toggle('on', c.getAttribute('data-f')===f); });
+  if (!silent && diffState.ran) renderDiffList();
+}
+
+function renderDiffList(){
+  var list = document.getElementById('diffList');
+  var all = diffState.diffs, f = diffState.filter;
+  diffState.visible = f==='all' ? all : all.filter(function(d){ return d.kind===f; });
+  diffState.idx = -1;
+  clearMarks(diffState.activeMarks);
+
+  if (!all.length){
+    list.innerHTML = '<div class="diff-empty ok">✓ Identical — no differences found.</div>';
+    return;
+  }
+  if (!diffState.visible.length){
+    list.innerHTML = '<div class="diff-empty">No differences of this type.</div>';
+    return;
+  }
+  var CAP = 1000, labels = {changed:'DIFFERENT', added:'B ONLY', removed:'A ONLY'};
+  var html = diffState.visible.slice(0, CAP).map(function(d, i){
+    var p = pathKey(d.segs), val;
+    if (d.kind==='changed') val = '<span class="old">'+esc(shortVal(d.a))+'</span><span class="sepv">≠</span><span class="new">'+esc(shortVal(d.b))+'</span>';
+    else if (d.kind==='added') val = '<span class="new">'+esc(shortVal(d.b))+'</span>';
+    else val = '<span class="old">'+esc(shortVal(d.a))+'</span>';
+    return '<div class="diff-row" id="drow'+i+'" onclick="selectDiff('+i+')">'+
+             '<span class="tag '+d.kind+'">'+labels[d.kind]+'</span>'+
+             '<span class="dpath" title="'+esc(p)+'">'+esc(p)+'</span>'+
+             '<span class="dval">'+val+'</span>'+
+           '</div>';
+  }).join('');
+  if (diffState.visible.length > CAP)
+    html += '<div class="diff-empty">… and '+(diffState.visible.length-CAP)+' more. Use ⊕ Copy Diff or ↓ Diff Report for the full list.</div>';
+  list.innerHTML = html;
+}
+
+function nearestRange(map, segs){
+  for (var n=segs.length; n>=0; n--){ var r = map[pathKey(segs.slice(0,n))]; if (r) return r; }
+  return null;
+}
+
+/* Open any folded region hiding this line */
+function unfoldAround(cm, line){
+  cm.getAllMarks().forEach(function(m){
+    if (!m.__isFold) return;
+    var f = m.find();
+    if (f && f.from.line <= line && f.to.line >= line) m.clear();
+  });
+}
+
+function reveal(cm, r){
+  if (!r) return;
+  unfoldAround(cm, r.s);
+  cm.scrollIntoView({from:CodeMirror.Pos(r.s,0), to:CodeMirror.Pos(Math.min(r.e, r.s+8),0)}, 60);
+}
+
+function selectDiff(i){
+  var d = diffState.visible[i];
+  if (!d) return;
+  diffState.idx = i;
+  clearMarks(diffState.activeMarks);
+  var k = pathKey(d.segs);
+  var rA = d.kind!=='added'   ? diffState.mapA[k] : null;
+  var rB = d.kind!=='removed' ? diffState.mapB[k] : null;
+  markRange(cmInput,  rA, 'active', diffState.activeMarks);
+  markRange(cmOutput, rB, 'active', diffState.activeMarks);
+  // For keys present on one side only, scroll the other side to the nearest parent for context
+  reveal(cmInput,  rA || nearestRange(diffState.mapA, d.segs));
+  reveal(cmOutput, rB || nearestRange(diffState.mapB, d.segs));
+
+  document.querySelectorAll('.diff-row.active').forEach(function(r){ r.classList.remove('active'); });
+  var row = document.getElementById('drow'+i);
+  if (row){ row.classList.add('active'); row.scrollIntoView({block:'nearest'}); }
+}
+
+function stepDiff(dir){
+  var n = diffState.visible.length;
+  if (!n) return;
+  var i = diffState.idx < 0 ? (dir>0 ? 0 : n-1) : (diffState.idx + dir + n) % n;
+  selectDiff(i);
+}
+
+function swapAB(){
+  initInputCM(); initOutputCM();
+  var a = cmInput.getValue(), b = cmOutput.getValue();
+  cmInput.setValue(b); cmOutput.setValue(a);
+  if (diffState.ran) runCompare();
+  else showToast('Swapped A ⇆ B');
+}
+
+/* ════════════════════ Toolbar actions ════════════════════ */
+function clearAll(){
+  if(cmInput) cmInput.setValue('');
+  if(cmOutput) cmOutput.setValue('');
+  ['inIndicator','outIndicator'].forEach(function(id){document.getElementById(id).classList.remove('active');});
+  document.getElementById('depthVal').textContent='—';
+  ['lineCount','sizeInfo','nodeCount'].forEach(function(id){document.getElementById(id).textContent='';});
+  lastParsed=null;
+  if (compareMode){
+    clearDiff(); resetDiffUI();
+    setStatus('Compare mode — paste JSON A (left) and JSON B (right)');
+  } else setStatus('Ready');
+}
+
+function copyOutput(){
+  if (compareMode){
+    if (!diffState.ran){ showToast('Run Find Diff first'); return; }
+    var txt = diffState.diffs.length ? diffReportText(diffState.diffs) : 'Identical — no differences';
+    navigator.clipboard.writeText(txt).then(function(){ showToast('Diff copied!'); });
+    return;
+  }
+  if(!lastParsed){showToast('Nothing to copy');return;}
+  var t=JSON.stringify(lastParsed,null,2).split('\n').filter(function(l){return l.trim()!=='';}).join('\n');
+  navigator.clipboard.writeText(t).then(function(){showToast('Copied!');});
+}
+
+function downloadBlob(text, name){
+  var blob=new Blob([text],{type:'application/json'});
+  var a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);a.download=name;a.click();
+}
+
+function downloadOutput(){
+  if (compareMode){
+    if (!diffState.ran){ showToast('Run Find Diff first'); return; }
+    var c = countKinds(diffState.diffs);
+    var report = {
+      summary: { total: diffState.diffs.length, different: c.changed, onlyInA: c.removed, onlyInB: c.added },
+      differences: diffState.diffs.map(function(d){
+        var o = { type: {changed:'different', removed:'onlyInA', added:'onlyInB'}[d.kind], path: pathKey(d.segs) };
+        if (d.kind!=='added') o.a = d.a;
+        if (d.kind!=='removed') o.b = d.b;
+        return o;
+      })
+    };
+    downloadBlob(JSON.stringify(report, null, 2), 'json-diff.json');
+    showToast('Diff report downloaded!');
+    return;
+  }
+  if(!lastParsed){showToast('Nothing to download');return;}
+  var t=JSON.stringify(lastParsed,null,2).split('\n').filter(function(l){return l.trim()!=='';}).join('\n');
+  downloadBlob(t, 'formatted.json');
+  showToast('Downloaded!');
+}
+
+async function pasteClipboard(){
+  try{
+    var t=await navigator.clipboard.readText();
+    initInputCM();
+    var target = cmInput;
+    if (compareMode){
+      initOutputCM();
+      // paste into the pane last focused; otherwise fill A first, then B
+      target = lastFocused || (cmInput.getValue().trim() ? cmOutput : cmInput);
+    }
+    target.setValue(t);
+    if (compareMode && diffState.ran) markStale();
+    showToast(compareMode ? 'Pasted into '+(target===cmInput?'JSON A':'JSON B')+'!' : 'Pasted!');
+  }catch(e){showToast('Clipboard access denied');}
+}
+
+document.addEventListener('keydown',function(e){
+  if(e.defaultPrevented) return; // already handled inside an editor
+  if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){ runPrimary(); e.preventDefault(); }
+  if(compareMode && e.altKey && (e.key==='ArrowDown'||e.key==='ArrowUp')){
+    stepDiff(e.key==='ArrowDown'?1:-1); e.preventDefault();
+  }
+});
+
+// Init input CM on page load so it's ready immediately
+window.addEventListener('load', function(){
+  document.getElementById('wrapLines').checked = wrapOn();
+  initInputCM();
+});
+
+/* ── Custom search ── */
+var searchState = {
+  Input:  { query:'', cursors:[], idx:-1, marks:[] },
+  Output: { query:'', cursors:[], idx:-1, marks:[] }
+};
+
+// Only clear search highlights (leaves code folds and diff highlights intact)
+function clearSearchMarks(pane){
+  var st = searchState[pane];
+  st.marks.forEach(function(m){ m.clear(); });
+  st.marks = [];
+}
+
+function openSearch(cm) {
+  var pane = cm === cmInput ? 'Input' : 'Output';
+  var bar  = document.getElementById('searchBar'+pane);
+  var inp  = document.getElementById('searchInput'+pane);
+  bar.classList.add('active');
+  inp.focus();
+  inp.select();
+  if (inp.value) runSearch(cm, pane, inp.value);
+}
+
+function closeSearch(cm, pane) {
+  if (!pane) pane = cm === cmInput ? 'Input' : 'Output';
+  document.getElementById('searchBar'+pane).classList.remove('active');
+  document.getElementById('searchCount'+pane).textContent = '—';
+  if (cm) cm.operation(function(){ clearSearchMarks(pane); });
+  searchState[pane] = { query:'', cursors:[], idx:-1, marks:[] };
+  if (cm) cm.focus();
+}
+
+function onSearchInput(cm, pane) {
+  var q = document.getElementById('searchInput'+pane).value;
+  runSearch(cm, pane, q);
+}
+
+function onSearchKey(e, cm, pane) {
+  if (e.key === 'Enter') { e.shiftKey ? searchPrev(cm, pane) : searchNext(cm, pane); e.preventDefault(); }
+  if (e.key === 'Escape') { closeSearch(cm, pane); e.preventDefault(); }
+}
+
+function runSearch(cm, pane, q) {
+  if (!cm) return;
+  var st = searchState[pane];
+  cm.operation(function(){ clearSearchMarks(pane); });
+  st.query = q;
+  st.cursors = [];
+  st.idx = -1;
+  if (!q) { document.getElementById('searchCount'+pane).textContent = '—'; return; }
+  var cursor = cm.getSearchCursor(q, CodeMirror.Pos(0,0), {caseFold:true});
+  while (cursor.findNext()) {
+    st.cursors.push({ from: cursor.from(), to: cursor.to() });
+  }
+  cm.operation(function(){
+    st.cursors.forEach(function(c){
+      st.marks.push(cm.markText(c.from, c.to, {className:'cm-matchhighlight'}));
+    });
+  });
+  if (st.cursors.length > 0) { st.idx = 0; jumpTo(cm, pane); }
+  else document.getElementById('searchCount'+pane).textContent = '0 results';
+}
+
+function jumpTo(cm, pane) {
+  var st = searchState[pane];
+  if (!st.cursors.length) return;
+  cm.operation(function(){
+    clearSearchMarks(pane);
+    st.cursors.forEach(function(c, i){
+      st.marks.push(cm.markText(c.from, c.to, {className: i===st.idx ? 'CodeMirror-search-match' : 'cm-matchhighlight'}));
+    });
+  });
+  cm.scrollIntoView({from: st.cursors[st.idx].from, to: st.cursors[st.idx].to}, 80);
+  document.getElementById('searchCount'+pane).textContent = (st.idx+1)+' / '+st.cursors.length;
+}
+
+function searchNext(cm, pane) {
+  if (!pane) pane = cm === cmInput ? 'Input' : 'Output';
+  var st = searchState[pane];
+  if (!st.cursors.length) return;
+  st.idx = (st.idx + 1) % st.cursors.length;
+  jumpTo(cm, pane);
+}
+
+function searchPrev(cm, pane) {
+  if (!pane) pane = cm === cmInput ? 'Input' : 'Output';
+  var st = searchState[pane];
+  if (!st.cursors.length) return;
+  st.idx = (st.idx - 1 + st.cursors.length) % st.cursors.length;
+  jumpTo(cm, pane);
+}
+</script>
+</body>
+</html>
