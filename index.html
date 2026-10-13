@@ -62,7 +62,9 @@ h1{font-size:16px;font-weight:800;letter-spacing:-0.02em;}
 .CodeMirror-foldgutter-open,.CodeMirror-foldgutter-folded{cursor:pointer;color:var(--muted);font-size:10px;padding-top:1px;}
 .CodeMirror-foldgutter-open:after{content:"▼";}
 .CodeMirror-foldgutter-folded:after{content:"▶";}
-.CodeMirror-foldmarker{color:var(--muted);background:var(--surface2);border:1px solid var(--border);border-radius:3px;font-family:var(--mono);font-size:10px;padding:0 5px;cursor:pointer;}
+.CodeMirror-foldmarker{color:var(--muted);background:var(--surface2);border:1px solid var(--border);border-radius:3px;font-family:var(--mono);font-size:10px;padding:0 6px;margin:0 2px;cursor:pointer;text-shadow:none;line-height:1.4;}
+.CodeMirror-foldmarker .fm-idx{color:var(--violet);font-weight:600;}
+.CodeMirror-foldmarker .fm-sep{opacity:.6;margin:0 4px;}
 .cm-s-default .cm-string{color:#1a7a3f;}
 .cm-s-default .cm-string-2{color:#1a7a3f;}
 .cm-s-default .cm-number{color:#b06000;}
@@ -270,6 +272,59 @@ function hangingIndent(cm, line, el){
   el.style.paddingLeft = (4 + off + 2*cm.defaultCharWidth()) + 'px';
 }
 
+/* ── Fold labels: collapsed {…}/[…] show their size, and their index when inside an array ── */
+// One pass over the text records, for every opening bracket, how many direct children it has
+// and (if it sits inside an array) its index. Cached until the document changes.
+function scanStructure(text){
+  var info = new Map(), stack = [], inStr = false, esc = false;
+  function hasValue(){ if (stack.length) stack[stack.length-1].has = true; }
+  for (var i = 0; i < text.length; i++){
+    var ch = text[i];
+    if (inStr){ if (esc) esc = false; else if (ch === '\\') esc = true; else if (ch === '"') inStr = false; continue; }
+    if (ch === '"'){ hasValue(); inStr = true; continue; }
+    if (ch === '{' || ch === '['){
+      var top = stack[stack.length-1];
+      var entry = { arr: ch === '[', index: (top && top.arr) ? top.commas : null, count: 0 };
+      info.set(i, entry);
+      hasValue();
+      stack.push({ arr: ch === '[', commas: 0, has: false, entry: entry });
+    } else if (ch === '}' || ch === ']'){
+      var s = stack.pop();
+      if (s) s.entry.count = s.has ? s.commas + 1 : 0;
+    } else if (ch === ','){
+      if (stack.length) stack[stack.length-1].commas++;
+    } else if (!/\s/.test(ch)){
+      hasValue();
+    }
+  }
+  // brackets left open (incomplete input): count what we have so far
+  stack.forEach(function(s){ s.entry.count = s.has ? s.commas + 1 : 0; });
+  return info;
+}
+
+function structureOf(cm){
+  var gen = cm.changeGeneration();
+  if (!cm.state.jpStruct || cm.state.jpStruct.gen !== gen)
+    cm.state.jpStruct = { gen: gen, info: scanStructure(cm.getValue()) };
+  return cm.state.jpStruct.info;
+}
+
+function foldLabel(cm, from){
+  var el = document.createElement('span');
+  el.className = 'CodeMirror-foldmarker';
+  var e = structureOf(cm).get(cm.indexFromPos(from) - 1);   // 'from' is just after the bracket
+  if (!e){ el.textContent = '\u2194'; return el; }
+  var size = e.count + ' ' + (e.arr ? (e.count === 1 ? 'item' : 'items') : (e.count === 1 ? 'key' : 'keys'));
+  if (e.index !== null){
+    var idx = document.createElement('span'); idx.className = 'fm-idx'; idx.textContent = '#' + e.index;
+    var sep = document.createElement('span'); sep.className = 'fm-sep'; sep.textContent = '\u00b7';
+    el.appendChild(idx); el.appendChild(sep);
+  }
+  el.appendChild(document.createTextNode(size));
+  el.title = (e.index !== null ? 'Array index ' + e.index + ' \u2014 ' : '') + size + ' (click to expand)';
+  return el;
+}
+
 /* ── Shared CodeMirror factory ── */
 function makeCM(textareaId, opts) {
   var ta = document.getElementById(textareaId);
@@ -297,6 +352,7 @@ function makeCM(textareaId, opts) {
   cm.getWrapperElement().style.flex   = '1';
   cm.getWrapperElement().style.height = '100%';
   cm.getWrapperElement().style.overflow = 'hidden';
+  cm.setOption('foldOptions', { widget: function(from){ return foldLabel(cm, from); } });
   cm.on('focus', function(c){ lastFocused = c; });
   cm.on('renderLine', function(c, line, el){ if (c.getOption('lineWrapping')) hangingIndent(c, line, el); });
   cm.on('change', function(c, change){ onEditorChange(c, change); });
